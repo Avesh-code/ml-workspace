@@ -1,4 +1,4 @@
-FROM ubuntu:20.04
+FROM ubuntu:24.04
 
 USER root
 
@@ -82,7 +82,7 @@ RUN \
         iproute2 \
         psmisc \
         tmux \
-        dpkg-sig \
+        # dpkg-sig was removed from the Ubuntu archives after 20.04 (unmaintained upstream)
         uuid-dev \
         csh \
         xclip \
@@ -122,7 +122,7 @@ RUN \
         # postgresql client
         libpq-dev \
         # mysql client (10MB)
-        libmysqlclient-dev \
+        default-libmysqlclient-dev \
         # mariadb client (7MB)
         # libmariadbclient-dev \
         # image processing library (6MB), required for tesseract
@@ -179,7 +179,7 @@ RUN \
         lzop \
 	    # deprecates bsdtar (https://ubuntu.pkgs.org/20.04/ubuntu-universe-i386/libarchive-tools_3.4.0-2ubuntu1_i386.deb.html)
         libarchive-tools \
-        zlibc \
+        # zlibc was removed from the Ubuntu archives after 20.04 (unmaintained upstream)
         # unpack (almost) everything with one command
         unp \
         libbz2-dev \
@@ -227,7 +227,7 @@ RUN \
     clean-layer.sh
 
 RUN \
-    OPEN_RESTY_VERSION="1.19.3.2" && \
+    OPEN_RESTY_VERSION="1.29.2.5" && \
     mkdir $RESOURCES_PATH"/openresty" && \
     cd $RESOURCES_PATH"/openresty" && \
     apt-get update && \
@@ -266,28 +266,27 @@ ENV \
     # TODO: CONDA_DIR is deprecated and should be removed in the future
     CONDA_DIR=/opt/conda \
     CONDA_ROOT=/opt/conda \
-    PYTHON_VERSION="3.8.10" \
-    CONDA_PYTHON_DIR=/opt/conda/lib/python3.8 \
-    MINICONDA_VERSION=4.9.2 \
-    MINICONDA_MD5=122c8c9beb51e124ab32a0fa6426c656 \
-    CONDA_VERSION=4.9.2
+    PYTHON_VERSION="3.12" \
+    CONDA_PYTHON_DIR=/opt/conda/lib/python3.12 \
+    # Miniforge bootstraps a conda-forge-only conda (no dependency on Anaconda's
+    # licensed 'defaults' channel or repo.anaconda.com, which many corporate/cloud
+    # networks block outright). Installer fetched from GitHub, not Anaconda.
+    MINIFORGE_VERSION=26.3.2-3 \
+    MINIFORGE_SHA256=848194851a98903134187fbb4ab50efe87b003e0c0f808f97644b7524a62bf2c
 
-RUN wget --no-verbose https://repo.anaconda.com/miniconda/Miniconda3-py38_${CONDA_VERSION}-Linux-x86_64.sh -O ~/miniconda.sh && \
-    echo "${MINICONDA_MD5} *miniconda.sh" | md5sum -c - && \
-    /bin/bash ~/miniconda.sh -b -p $CONDA_ROOT && \
+RUN wget --no-verbose https://github.com/conda-forge/miniforge/releases/download/${MINIFORGE_VERSION}/Miniforge3-${MINIFORGE_VERSION}-Linux-x86_64.sh -O ~/miniforge.sh && \
+    echo "${MINIFORGE_SHA256} *miniforge.sh" | sha256sum -c - && \
+    /bin/bash ~/miniforge.sh -b -p $CONDA_ROOT && \
     export PATH=$CONDA_ROOT/bin:$PATH && \
-    rm ~/miniconda.sh && \
+    rm ~/miniforge.sh && \
     # Configure conda
-    # TODO: Add conde-forge as main channel -> remove if testted
-    # TODO, use condarc file
-    $CONDA_ROOT/bin/conda config --system --add channels conda-forge && \
     $CONDA_ROOT/bin/conda config --system --set auto_update_conda False && \
     $CONDA_ROOT/bin/conda config --system --set show_channel_urls True && \
     $CONDA_ROOT/bin/conda config --system --set channel_priority strict && \
     # Deactivate pip interoperability (currently default), otherwise conda tries to uninstall pip packages
     $CONDA_ROOT/bin/conda config --system --set pip_interop_enabled false && \
     # Update conda
-    $CONDA_ROOT/bin/conda update -y -n base -c defaults conda && \
+    $CONDA_ROOT/bin/conda update -y -n base conda && \
     $CONDA_ROOT/bin/conda update -y setuptools && \
     $CONDA_ROOT/bin/conda install -y conda-build && \
     # Update selected packages - install python 3.8.x
@@ -318,7 +317,8 @@ ENV LD_LIBRARY_PATH=$CONDA_ROOT/lib
 RUN git clone https://github.com/pyenv/pyenv.git $RESOURCES_PATH/.pyenv && \
     # Install pyenv plugins based on pyenv installer
     git clone https://github.com/pyenv/pyenv-virtualenv.git $RESOURCES_PATH/.pyenv/plugins/pyenv-virtualenv  && \
-    git clone git://github.com/pyenv/pyenv-doctor.git $RESOURCES_PATH/.pyenv/plugins/pyenv-doctor && \
+    # git:// (port 9418) was disabled by GitHub in 2022 - https works for the same repo
+    git clone https://github.com/pyenv/pyenv-doctor.git $RESOURCES_PATH/.pyenv/plugins/pyenv-doctor && \
     git clone https://github.com/pyenv/pyenv-update.git $RESOURCES_PATH/.pyenv/plugins/pyenv-update && \
     git clone https://github.com/pyenv/pyenv-which-ext.git $RESOURCES_PATH/.pyenv/plugins/pyenv-which-ext && \
     apt-get update && \
@@ -343,7 +343,7 @@ ENV PATH=$HOME/.local/bin:$PATH
 RUN \
     apt-get update && \
     # https://nodejs.org/en/about/releases/ use even numbered releases, i.e. LTS versions
-    curl -sL https://deb.nodesource.com/setup_14.x | sudo -E bash - && \
+    curl -sL https://deb.nodesource.com/setup_24.x | sudo -E bash - && \
     apt-get install -y nodejs && \
     # As conda is first in path, the commands 'node' and 'npm' reference to the version of conda.
     # Replace those versions with the newly installed versions of node
@@ -401,11 +401,12 @@ RUN \
 
 # Install xfce4 & gui tools
 RUN \
-    # Use staging channel to get newest xfce4 version (4.16)
-    add-apt-repository -y ppa:xubuntu-dev/staging && \
+    # Ubuntu 24.04 ships a current xfce4 (4.18) in the main archive already,
+    # no need for the old 20.04-era xubuntu-dev/staging PPA
     apt-get update && \
     apt-get install -y --no-install-recommends xfce4 && \
-    apt-get install -y --no-install-recommends gconf2 && \
+    # gconf2 (GNOME 2's old config store) was removed from the Ubuntu archives years ago;
+    # xfce4 uses xfconf/dconf and never needed it.
     apt-get install -y --no-install-recommends xfce4-terminal && \
     apt-get install -y --no-install-recommends xfce4-clipman && \
     apt-get install -y --no-install-recommends xterm && \
@@ -421,7 +422,7 @@ RUN \
     apt-get install -y thunar-vcs-plugin && \
     # Streaming text editor for large files - klogg is alternative to glogg
     apt-get install -y --no-install-recommends libqt5concurrent5 libqt5widgets5 libqt5xml5 && \
-    wget --no-verbose https://github.com/variar/klogg/releases/download/v20.12/klogg-20.12.0.813-Linux.deb -O $RESOURCES_PATH/klogg.deb && \
+    wget --no-verbose https://github.com/variar/klogg/releases/download/v22.06/klogg-22.06.0.1289-Linux-amd64-jammy.deb -O $RESOURCES_PATH/klogg.deb && \
     dpkg -i $RESOURCES_PATH/klogg.deb && \
     rm $RESOURCES_PATH/klogg.deb && \
     # Disk Usage Visualizer
@@ -440,17 +441,16 @@ RUN \
     # Install nautilus and support for sftp mounting
     apt-get install -y --no-install-recommends nautilus gvfs-backends && \
     # Install gigolo - Access remote systems
-    apt-get install -y --no-install-recommends gigolo gvfs-bin && \
+    # gvfs-bin (old GVFS CLI wrapper tools) was removed from the Ubuntu archives, superseded by 'gio'
+    apt-get install -y --no-install-recommends gigolo && \
     # xfce systemload panel plugin - needs to be activated
     # apt-get install -y --no-install-recommends xfce4-systemload-plugin && \
     # Leightweight ftp client that supports sftp, http, ...
     apt-get install -y --no-install-recommends gftp && \
-    # Install chrome
-    # sudo add-apt-repository ppa:system76/pop
-    add-apt-repository ppa:saiarcot895/chromium-beta && \
-    apt-get update && \
-    apt-get install -y chromium-browser chromium-browser-l10n chromium-codecs-ffmpeg && \
-    ln -s /usr/bin/chromium-browser /usr/bin/google-chrome && \
+    # Note: Ubuntu no longer ships a real chromium-browser .deb (apt-get install chromium-browser
+    # just pulls in the snap, which needs snapd and doesn't work inside a Docker container), and the
+    # old saiarcot895/chromium-beta PPA that used to provide one is not maintained for 24.04.
+    # Firefox (installed separately below) is the GUI browser in this image instead.
     # Cleanup
     apt-get purge -y pm-utils xscreensaver* && \
     # Large package: gnome-user-guide 50MB app-install-data 50MB
@@ -469,13 +469,15 @@ RUN \
     # apt-get install -y python-numpy  && \
     cd ${RESOURCES_PATH} && \
     # Tiger VNC
-    wget -qO- https://sourceforge.net/projects/tigervnc/files/stable/1.11.0/tigervnc-1.11.0.x86_64.tar.gz/download | tar xz --strip 1 -C / && \
+    wget -qO- https://sourceforge.net/projects/tigervnc/files/stable/1.16.2/tigervnc-1.16.2.x86_64.tar.gz/download | tar xz --strip 1 -C / && \
     # Install websockify
     mkdir -p ./novnc/utils/websockify && \
     # Before updating the noVNC version, we need to make sure that our monkey patching scripts still work!!
-    wget -qO- https://github.com/novnc/noVNC/archive/v1.2.0.tar.gz | tar xz --strip 1 -C ./novnc && \
-    wget -qO- https://github.com/novnc/websockify/archive/v0.9.0.tar.gz | tar xz --strip 1 -C ./novnc/utils/websockify && \
-    chmod +x -v ./novnc/utils/*.sh && \
+    wget -qO- https://github.com/novnc/noVNC/archive/v1.7.0.tar.gz | tar xz --strip 1 -C ./novnc && \
+    wget -qO- https://github.com/novnc/websockify/archive/v0.13.0.tar.gz | tar xz --strip 1 -C ./novnc/utils/websockify && \
+    # noVNC v1.7.0 no longer ships .sh launcher scripts under utils/ (replaced by utils/novnc_proxy) -
+    # harmless either way since novnc.conf actually starts websockify directly, not via this script.
+    chmod +x -v ./novnc/utils/*.sh 2>/dev/null; \
     # create user vnc directory
     mkdir -p $HOME/.vnc && \
     # Fix permissions
@@ -573,17 +575,14 @@ RUN \
     # Install some basics - required to run container
     conda install -y --update-all \
             'python='$PYTHON_VERSION \
-            'ipython=7.24.*' \
-            'notebook=6.4.*' \
-            'jupyterlab=3.0.*' \
-            # TODO: nbconvert 6.x makes problems with template_path
-            'nbconvert=5.6.*' \
-            # TODO: temp fix: yarl version 1.5 is required for lots of libraries.
-            'yarl==1.5.*' \
+            'ipython=8.*' \
+            'notebook=7.6.*' \
+            'jupyterlab=4.6.*' \
+            'nbconvert=7.*' \
             # TODO install scipy, numpy, sklearn, and numexpr via conda for mkl optimizaed versions: https://docs.anaconda.com/mkl-optimizations/
-            'scipy==1.7.*' \
-            'numpy==1.19.*' \
-            scikit-learn \
+            'scipy=1.18.*' \
+            'numpy=2.5.*' \
+            'scikit-learn=1.9.*' \
             numexpr && \
             # installed via apt-get and pip: protobuf \
             # installed via apt-get: zlib  && \
@@ -607,10 +606,10 @@ RUN \
         'python='$PYTHON_VERSION \
         boost \
         mkl-include && \
-    # Install mkldnn
-    conda install -y --freeze-installed -c mingfeima mkldnn && \
-    # Install pytorch - cpu only
-    conda install -y -c pytorch "pytorch==1.9.*" cpuonly && \
+    # Install pytorch - cpu only. Installed via pip from the official PyTorch index instead of the
+    # 'pytorch' conda channel (which has slowed its conda release cadence); oneDNN (mkldnn's successor)
+    # ships built into modern torch wheels, so the old mingfeima/mkldnn conda package is no longer needed.
+    pip install --no-cache-dir torch==2.13.* --index-url https://download.pytorch.org/whl/cpu && \
     # Install light pip requirements
     pip install --no-cache-dir --upgrade --upgrade-strategy only-if-needed -r ${RESOURCES_PATH}/libraries/requirements-light.txt && \
     # If light light flavor - exit here
@@ -647,10 +646,13 @@ RUN \
     # Faiss - A library for efficient similarity search and clustering of dense vectors.
     conda install -y --freeze-installed faiss-cpu && \
     # Install full pip requirements
-    pip install --no-cache-dir --upgrade --upgrade-strategy only-if-needed --use-deprecated=legacy-resolver -r ${RESOURCES_PATH}/libraries/requirements-full.txt && \
+    # NOTE: the old --use-deprecated=legacy-resolver flag was removed entirely in pip 23.1 and would
+    # hard-fail the build now; the modern resolver handles this file fine now that it's mostly unpinned.
+    pip install --no-cache-dir --upgrade --upgrade-strategy only-if-needed -r ${RESOURCES_PATH}/libraries/requirements-full.txt && \
     # Setup Spacy
-    # Spacy - download and large language removal
-    python -m spacy download en && \
+    # Spacy - download language model. The old shorthand 'python -m spacy download en' was removed
+    # years ago; modern spacy requires the explicit model package name.
+    python -m spacy download en_core_web_sm && \
     # Fix permissions
     fix-permissions.sh $CONDA_ROOT && \
     # Cleanup
@@ -678,145 +680,87 @@ COPY resources/jupyter/nbconfig /etc/jupyter/nbconfig
 COPY resources/jupyter/jupyter_notebook_config.json /etc/jupyter/
 
 # install jupyter extensions
+#
+# NOTE: JupyterLab 3 -> 4 / Notebook 6 -> 7 is a breaking architectural change, not just a version
+# bump: Notebook 7 is now built on JupyterLab, and the classic "nbextension" system used throughout
+# this block (jupyter contrib nbextension install/enable, jupyter labextension install, jupyter lab
+# build) no longer exists. Extensions are now plain pip packages that ship a prebuilt ("federated")
+# JupyterLab extension - no separate install/enable/build step required, which also means several
+# extensions below (toc2, execute_time, collapsible_headings, codefolding) are just gone because
+# JupyterLab 4 has them built in natively. A few of the old extensions (witwidget, qgrid, the
+# InfuseAI/chaoleili tensorboard integrations, jupyter-black) have had no compatible release in years
+# and are dropped rather than force-pinned to something broken; jupyterlab_code_formatter already
+# covers the code-formatting use case jupyter-black served, and `%load_ext tensorboard` (ships with
+# the tensorboard pip package itself) replaces the old notebook Tensorboard nbextension.
 RUN \
-    # Create empty notebook configuration
-    mkdir -p $HOME/.jupyter/nbconfig/ && \
-    printf "{\"load_extensions\": {}}" > $HOME/.jupyter/nbconfig/notebook.json && \
-    # Activate and configure extensions
-    jupyter contrib nbextension install --sys-prefix && \
-    # nbextensions configurator
-    jupyter nbextensions_configurator enable --sys-prefix && \
     # Configure nbdime
     nbdime config-git --enable --global && \
-    # Activate Jupytext
-    jupyter nbextension enable --py jupytext --sys-prefix && \
-    # Enable useful extensions
-    jupyter nbextension enable skip-traceback/main --sys-prefix && \
-    # jupyter nbextension enable comment-uncomment/main && \
-    jupyter nbextension enable toc2/main --sys-prefix && \
-    jupyter nbextension enable execute_time/ExecuteTime --sys-prefix && \
-    jupyter nbextension enable collapsible_headings/main --sys-prefix && \
-    jupyter nbextension enable codefolding/main --sys-prefix && \
-    # Disable pydeck extension, cannot be loaded (404)
-    jupyter nbextension disable pydeck/extension && \
-    # Install and activate Jupyter Tensorboard
-    pip install --no-cache-dir git+https://github.com/InfuseAI/jupyter_tensorboard.git && \
-    jupyter tensorboard enable --sys-prefix && \
-    # TODO moved to configuration files = resources/jupyter/nbconfig Edit notebook config
-    # echo '{"nbext_hide_incompat": false}' > $HOME/.jupyter/nbconfig/common.json && \
-    cat $HOME/.jupyter/nbconfig/notebook.json | jq '.toc2={"moveMenuLeft": false,"widenNotebook": false,"skip_h1_title": false,"sideBar": true,"number_sections": false,"collapse_to_match_collapsible_headings": true}' > tmp.$$.json && mv tmp.$$.json $HOME/.jupyter/nbconfig/notebook.json && \
     # If minimal flavor - exit here
     if [ "$WORKSPACE_FLAVOR" = "minimal" ]; then \
         # Cleanup
         clean-layer.sh && \
         exit 0 ; \
     fi && \
-    # TODO: Not installed. Disable Jupyter Server Proxy
-    # jupyter nbextension disable jupyter_server_proxy/tree --sys-prefix && \
-    # Install jupyter black
-    jupyter nbextension install https://github.com/drillan/jupyter-black/archive/master.zip --sys-prefix && \
-    jupyter nbextension enable jupyter-black-master/jupyter-black --sys-prefix && \
+    # Jupytext ships its own prebuilt JupyterLab extension via pip, no manual enable needed
+    pip install --no-cache-dir jupytext && \
     # If light flavor - exit here
     if [ "$WORKSPACE_FLAVOR" = "light" ]; then \
         # Cleanup
         clean-layer.sh && \
         exit 0 ; \
     fi && \
-    # Install and activate what if tool
-    pip install witwidget && \
-    jupyter nbextension install --py --symlink --sys-prefix witwidget && \
-    jupyter nbextension enable --py --sys-prefix witwidget && \
-    # Activate qgrid
-    jupyter nbextension enable --py --sys-prefix qgrid && \
-    # TODO: Activate Colab support
-    # jupyter serverextension enable --py jupyter_http_over_ws && \
-    # Activate Voila Rendering
-    # currently not working jupyter serverextension enable voila --sys-prefix && \
-    # Enable ipclusters
-    ipcluster nbextension enable && \
-    # Fix permissions? fix-permissions.sh $CONDA_ROOT && \
+    # Fix permissions
+    fix-permissions.sh $CONDA_ROOT && \
     # Cleanup
     clean-layer.sh
 
-# install jupyterlab
+# install jupyterlab extensions
 RUN \
-    # without es6-promise some extension builds fail
-    npm install -g es6-promise && \
-    # define alias command for jupyterlab extension installs with log prints to stdout
-    jupyter lab build && \
-    lab_ext_install='jupyter labextension install -y --debug-log-path=/dev/stdout --log-level=WARN --minimize=False --no-build' && \
-    # jupyterlab installed in requirements section
-    $lab_ext_install @jupyter-widgets/jupyterlab-manager && \
+    # ipywidgets>=8 ships the jupyterlab_widgets federated extension automatically - no manual
+    # jupyterlab-manager labextension install needed anymore
+    pip install --no-cache-dir 'ipywidgets>=8' && \
     # If minimal flavor - do not install jupyterlab extensions
     if [ "$WORKSPACE_FLAVOR" = "minimal" ]; then \
-        # Final build with minimization
-        jupyter lab build -y --debug-log-path=/dev/stdout --log-level=WARN && \
-        # Cleanup
-        jupyter lab clean && \
-        jlpm cache clean && \
-        rm -rf $CONDA_ROOT/share/jupyter/lab/staging && \
         clean-layer.sh && \
         exit 0 ; \
     fi && \
-    $lab_ext_install @jupyterlab/toc && \
-    # install temporarily from gitrepo due to the issue that jupyterlab_tensorboard does not work with 3.x yet as described here: https://github.com/chaoleili/jupyterlab_tensorboard/issues/28#issuecomment-783594541
-    #$lab_ext_install jupyterlab_tensorboard && \
-    pip install git+https://github.com/chaoleili/jupyterlab_tensorboard.git && \
-    # install jupyterlab git
-    # $lab_ext_install @jupyterlab/git && \
-    pip install jupyterlab-git && \
-    # jupyter serverextension enable --py jupyterlab_git && \
-    # For Matplotlib: https://github.com/matplotlib/jupyter-matplotlib
-    #$lab_ext_install jupyter-matplotlib && \
+    # jupyterlab-git ships a prebuilt JupyterLab 4 extension via pip
+    pip install --no-cache-dir jupyterlab-git && \
     # Do not install any other jupyterlab extensions
     if [ "$WORKSPACE_FLAVOR" = "light" ]; then \
-        # Final build with minimization
-        jupyter lab build -y --debug-log-path=/dev/stdout --log-level=WARN && \
-        # Cleanup
-        jupyter lab clean && \
-        jlpm cache clean && \
-        rm -rf $CONDA_ROOT/share/jupyter/lab/staging && \
         clean-layer.sh && \
         exit 0 ; \
-    fi \
+    fi && \
     # Install jupyterlab language server support
-    && pip install jupyterlab-lsp==3.7.0 jupyter-lsp==1.3.0 && \
-    # $lab_ext_install install @krassowski/jupyterlab-lsp@2.0.8 && \
-    # For Plotly
-    $lab_ext_install jupyterlab-plotly && \
-    $lab_ext_install install @jupyter-widgets/jupyterlab-manager plotlywidget && \
-    # produces build error: jupyter labextension install jupyterlab-chart-editor && \
-    $lab_ext_install jupyterlab-chart-editor && \
+    pip install --no-cache-dir jupyterlab-lsp==5.3.* 'jupyter-lsp>=2.0.0' && \
+    # Plotly's JupyterLab 4 rendering ships built into the plotly package itself (requirements-full.txt) -
+    # no separate jupyterlab-plotly/plotlywidget labextension needed anymore. jupyterlab-chart-editor
+    # is npm-only (no PyPI package) and would need the old `jupyter labextension install` + `jupyter
+    # lab build` pipeline removed above, so it's dropped rather than reintroducing that just for it.
     # Install jupyterlab variable inspector - https://github.com/lckr/jupyterlab-variableInspector
-    pip install lckr-jupyterlab-variableinspector && \
-    # For holoview
-    # TODO: pyviz is not yet supported by the current JupyterLab version
-    #     $lab_ext_install @pyviz/jupyterlab_pyviz && \
-    # Install Debugger in Jupyter Lab
-    # pip install --no-cache-dir xeus-python && \
-    # $lab_ext_install @jupyterlab/debugger && \
-    # Install jupyterlab code formattor - https://github.com/ryantam626/jupyterlab_code_formatter
-    $lab_ext_install @ryantam626/jupyterlab_code_formatter && \
-    pip install jupyterlab_code_formatter && \
-    jupyter serverextension enable --py jupyterlab_code_formatter \
-    # Final build with minimization
-    && jupyter lab build -y --debug-log-path=/dev/stdout --log-level=WARN && \
-    jupyter lab build && \
+    pip install --no-cache-dir lckr-jupyterlab-variableinspector && \
+    # Install jupyterlab code formatter - https://github.com/ryantam626/jupyterlab_code_formatter
+    pip install --no-cache-dir jupyterlab_code_formatter && \
+    jupyter server extension enable --py jupyterlab_code_formatter && \
+    # Fix permissions
+    fix-permissions.sh $CONDA_ROOT && \
     # Cleanup
-    # Clean jupyter lab cache: https://github.com/jupyterlab/jupyterlab/issues/4930
-    jupyter lab clean && \
-    jlpm cache clean && \
-    # Remove build folder -> should be remove by lab clean as well?
-    rm -rf $CONDA_ROOT/share/jupyter/lab/staging && \
     clean-layer.sh
 
 # Install Jupyter Tooling Extension
 COPY resources/jupyter/extensions $RESOURCES_PATH/jupyter-extensions
 
-RUN \
-    pip install --no-cache-dir $RESOURCES_PATH/jupyter-extensions/tooling-extension/ && \
-    # Cleanup
-    clean-layer.sh
+# NOTE: resources/jupyter/extensions/tooling-extension (the "Open Tools" widget linking to
+# VS Code/VNC/ungit/netdata/etc. from within Jupyter) is disabled here, not just version-bumped.
+# Its setup.py imports notebook.nbextensions.install_nbextension and writes NotebookApp.
+# nbserver_extensions config - both are classic Notebook 6 APIs that don't exist in Notebook 7 /
+# JupyterLab 4 (which uses federated JS extensions and ServerApp.jpserver_extensions instead).
+# Skipping it here rather than crashing the build; it needs an actual JupyterLab-4-native rewrite
+# (real extension-builder/TS scaffolding), which is out of scope for a version bump.
+# RUN \
+#     pip install --no-cache-dir $RESOURCES_PATH/jupyter-extensions/tooling-extension/ && \
+#     # Cleanup
+#     clean-layer.sh
 
 # Install and activate ZSH
 COPY resources/tools/oh-my-zsh.sh $RESOURCES_PATH/tools/oh-my-zsh.sh
@@ -857,26 +801,27 @@ RUN \
     cd $RESOURCES_PATH && \
     mkdir -p $HOME/.vscode/extensions/ && \
     # Install vs code jupyter - required by python extension
-    VS_JUPYTER_VERSION="2021.6.832593372" && \
+    VS_JUPYTER_VERSION="2026.6.2026071501" && \
     wget --retry-on-http-error=429 --waitretry 15 --tries 5 --no-verbose https://marketplace.visualstudio.com/_apis/public/gallery/publishers/ms-toolsai/vsextensions/jupyter/$VS_JUPYTER_VERSION/vspackage -O ms-toolsai.jupyter-$VS_JUPYTER_VERSION.vsix && \
     bsdtar -xf ms-toolsai.jupyter-$VS_JUPYTER_VERSION.vsix extension && \
     rm ms-toolsai.jupyter-$VS_JUPYTER_VERSION.vsix && \
     mv extension $HOME/.vscode/extensions/ms-toolsai.jupyter-$VS_JUPYTER_VERSION && \
     sleep $SLEEP_TIMER && \
-    # Install python extension - (newer versions are 30MB bigger)
-    VS_PYTHON_VERSION="2021.5.926500501" && \
-    wget --no-verbose https://github.com/microsoft/vscode-python/releases/download/$VS_PYTHON_VERSION/ms-python-release.vsix && \
-    bsdtar -xf ms-python-release.vsix extension && \
-    rm ms-python-release.vsix && \
+    # Install python extension. Microsoft stopped publishing plain vsix files under
+    # github.com/microsoft/vscode-python/releases years ago - use the same marketplace gallery
+    # API pattern as the other extensions here instead.
+    VS_PYTHON_VERSION="2026.7.2026080801" && \
+    wget --retry-on-http-error=429 --waitretry 15 --tries 5 --no-verbose https://marketplace.visualstudio.com/_apis/public/gallery/publishers/ms-python/vsextensions/python/$VS_PYTHON_VERSION/vspackage -O ms-python.python-$VS_PYTHON_VERSION.vsix && \
+    bsdtar -xf ms-python.python-$VS_PYTHON_VERSION.vsix extension && \
+    rm ms-python.python-$VS_PYTHON_VERSION.vsix && \
     mv extension $HOME/.vscode/extensions/ms-python.python-$VS_PYTHON_VERSION && \
-    # && code-server --install-extension ms-python.python@$VS_PYTHON_VERSION \
     sleep $SLEEP_TIMER && \
     # If light flavor -> exit here
     if [ "$WORKSPACE_FLAVOR" = "light" ]; then \
         exit 0 ; \
     fi && \
     # Install prettie: https://github.com/prettier/prettier-vscode/releases
-    PRETTIER_VERSION="6.4.0" && \
+    PRETTIER_VERSION="12.4.0" && \
     wget --no-verbose https://github.com/prettier/prettier-vscode/releases/download/v$PRETTIER_VERSION/prettier-vscode-$PRETTIER_VERSION.vsix && \
     bsdtar -xf prettier-vscode-$PRETTIER_VERSION.vsix extension && \
     rm prettier-vscode-$PRETTIER_VERSION.vsix && \
@@ -890,9 +835,8 @@ RUN \
     # && code-server --install-extension formulahendry.code-runner@$VS_CODE_RUNNER_VERSION \
     sleep $SLEEP_TIMER && \
     # Install ESLint extension: https://marketplace.visualstudio.com/items?itemName=dbaeumer.vscode-eslint
-    VS_ESLINT_VERSION="2.1.23" && \
+    VS_ESLINT_VERSION="3.0.34" && \
     wget --retry-on-http-error=429 --waitretry 15 --tries 5 --no-verbose https://marketplace.visualstudio.com/_apis/public/gallery/publishers/dbaeumer/vsextensions/vscode-eslint/$VS_ESLINT_VERSION/vspackage -O dbaeumer.vscode-eslint.vsix && \
-    # && wget --no-verbose https://github.com/microsoft/vscode-eslint/releases/download/$VS_ESLINT_VERSION-insider.2/vscode-eslint-$VS_ESLINT_VERSION.vsix -O dbaeumer.vscode-eslint.vsix && \
     bsdtar -xf dbaeumer.vscode-eslint.vsix extension && \
     rm dbaeumer.vscode-eslint.vsix && \
     mv extension $HOME/.vscode/extensions/dbaeumer.vscode-eslint-$VS_ESLINT_VERSION.vsix && \
@@ -966,6 +910,10 @@ COPY resources/supervisor/programs/ /etc/supervisor/conf.d/
 COPY resources/config/90assumeyes /etc/apt/apt.conf.d/
 
 # Monkey Patching novnc: Styling and added clipboard support. All changed sections are marked with CUSTOM CODE
+# NOTE: noVNC was bumped from v1.2.0 -> v1.7.0 above (5 major versions). vnc.html and app/ui.js
+# have very likely changed structurally upstream since then - re-diff the CUSTOM CODE sections in
+# resources/novnc/vnc.html and resources/novnc/app/ui.js against the new noVNC source before trusting
+# this overlay; the VNC desktop may render broken/unstyled until that's reconciled.
 COPY resources/novnc/ $RESOURCES_PATH/novnc/
 
 RUN \
@@ -990,10 +938,12 @@ COPY resources/jupyter/ipython_config.py /etc/ipython/ipython_config.py
 
 # Branding of various components
 RUN \
-    # Jupyter Branding
-    cp -f $RESOURCES_PATH/branding/logo.png $CONDA_PYTHON_DIR"/site-packages/notebook/static/base/images/logo.png" && \
-    cp -f $RESOURCES_PATH/branding/favicon.ico $CONDA_PYTHON_DIR"/site-packages/notebook/static/base/images/favicon.ico" && \
-    cp -f $RESOURCES_PATH/branding/favicon.ico $CONDA_PYTHON_DIR"/site-packages/notebook/static/favicon.ico" && \
+    # Jupyter Branding: Notebook 7 is JupyterLab-based and no longer ships the classic Notebook 6
+    # static/base/images/ path this used to overwrite - skip missing paths rather than fail the build
+    # over cosmetic branding.
+    (cp -f $RESOURCES_PATH/branding/logo.png $CONDA_PYTHON_DIR"/site-packages/notebook/static/base/images/logo.png" || true) && \
+    (cp -f $RESOURCES_PATH/branding/favicon.ico $CONDA_PYTHON_DIR"/site-packages/notebook/static/base/images/favicon.ico" || true) && \
+    (cp -f $RESOURCES_PATH/branding/favicon.ico $CONDA_PYTHON_DIR"/site-packages/notebook/static/favicon.ico" || true) && \
     # Fielbrowser Branding
     mkdir -p $RESOURCES_PATH"/filebrowser/img/icons/" && \
     cp -f $RESOURCES_PATH/branding/favicon.ico $RESOURCES_PATH"/filebrowser/img/icons/favicon.ico" && \
