@@ -57,8 +57,17 @@ def configure_runtime_user():
             os.environ["WORKSPACE_RUNTIME_HOME"] = "/root"
             return
 
-        # Passwordless sudo - this is a personal dev workspace, not a shared multi-tenant system
+        # Passwordless sudo - this is a personal dev workspace, not a shared multi-tenant system.
+        # sudo's default "secure_path" strips the image's custom PATH (pyenv shims/conda) and
+        # replaces it with a bare system default, which breaks tools like `pyenv` as soon as this
+        # user runs `sudo`/`sudo su` - so explicitly extend secure_path to keep them working.
+        resources_path = os.getenv("RESOURCES_PATH", "/resources")
+        secure_path = (
+            resources_path + "/.pyenv/shims:" + resources_path + "/.pyenv/bin:"
+            "/opt/conda/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+        )
         with open("/etc/sudoers.d/" + username, "w") as f:
+            f.write('Defaults:' + username + ' secure_path="' + secure_path + '"\n')
             f.write(username + " ALL=(ALL) NOPASSWD:ALL\n")
         os.chmod("/etc/sudoers.d/" + username, 0o440)
 
