@@ -49,14 +49,17 @@ if ! hash zsh 2>/dev/null; then
     # \nexport TYPEWRITTEN_PROMPT_LAYOUT=\"pure\"\nexport TYPEWRITTEN_COLOR_MAPPINGS=\"primary:cyan\"
     # Other good themes: avit, clean
 
-    # Fix red arrow problem with avit theme
-    sed -i 's/fg\[red\]}.${fg\[white\]})%}▶/fg\[white\]}.${fg\[white\]})%}▶/g' ~/.oh-my-zsh/themes/avit.zsh-theme
+    # Fix red arrow problem with avit theme (best-effort: oh-my-zsh is cloned from master each
+    # build, and this theme file's path/name has moved around upstream over the years)
+    sed -i 's/fg\[red\]}.${fg\[white\]})%}▶/fg\[white\]}.${fg\[white\]})%}▶/g' ~/.oh-my-zsh/themes/avit.zsh-theme 2>/dev/null || true
 
     printf "export source ZSH=\"$HOME/.oh-my-zsh\"\nZSH_THEME=\"avit\"\nDISABLE_AUTO_UPDATE=\"true\"\nZSH_AUTOSUGGEST_HIGHLIGHT_STYLE=\"fg=245\"\nplugins=(git k extract cp pip yarn npm sudo zsh-256color supervisor rsync command-not-found autojump colored-man-pages git-flow git-extras httpie python zsh-autosuggestions history-substring-search zsh-completions zsh-syntax-highlighting)\nsource \$ZSH/oh-my-zsh.sh\nLS_COLORS=\"\"\nexport LS_COLORS\nalias pcat=\"pygmentize -g\"\neval \"\$(pyenv init -)\"\neval \"\$(pyenv virtualenv-init -)\"" > ~/.zshrc
 
     # Also add fzf to plugins
     git clone --depth 1 https://github.com/junegunn/fzf.git $RESOURCES_PATH/.fzf
-    y | $RESOURCES_PATH/.fzf/install
+    # 'y' is not a real command (was silently failing every build with "y: command not found") -
+    # fzf's own installer already supports a non-interactive full-install flag.
+    $RESOURCES_PATH/.fzf/install --all --no-update-rc
 
     # TODO install zsh completions?
     # sudo sh -c "echo 'deb http://download.opensuse.org/repositories/shells:/zsh-users:/zsh-completions/xUbuntu_16.04/ /' > /etc/apt/sources.list.d/shells:zsh-users:zsh-completions.list"

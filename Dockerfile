@@ -750,17 +750,21 @@ RUN \
 # Install Jupyter Tooling Extension
 COPY resources/jupyter/extensions $RESOURCES_PATH/jupyter-extensions
 
-# NOTE: resources/jupyter/extensions/tooling-extension (the "Open Tools" widget linking to
-# VS Code/VNC/ungit/netdata/etc. from within Jupyter) is disabled here, not just version-bumped.
-# Its setup.py imports notebook.nbextensions.install_nbextension and writes NotebookApp.
-# nbserver_extensions config - both are classic Notebook 6 APIs that don't exist in Notebook 7 /
-# JupyterLab 4 (which uses federated JS extensions and ServerApp.jpserver_extensions instead).
-# Skipping it here rather than crashing the build; it needs an actual JupyterLab-4-native rewrite
-# (real extension-builder/TS scaffolding), which is out of scope for a version bump.
-# RUN \
-#     pip install --no-cache-dir $RESOURCES_PATH/jupyter-extensions/tooling-extension/ && \
-#     # Cleanup
-#     clean-layer.sh
+# NOTE: the frontend "Open Tools" launcher widget (classic Notebook 6 nbextension JS) is NOT
+# installed here - it needs an actual JupyterLab-4-native rewrite (real extension-builder/TS
+# scaffolding), out of scope for a version bump. What IS installed is the backend server extension,
+# which registers /tooling/ping - nginx's per-request auth check for /tools/* (VS Code, VNC,
+# netdata, glances, ungit) calls this endpoint whenever AUTHENTICATE_VIA_JUPYTER is enabled, and
+# every one of those routes 302s back to / if it's missing, regardless of the launcher widget.
+# Activation itself already happens via the static NotebookApp.nbserver_extensions entry in
+# resources/jupyter/jupyter_notebook_config.json (copied to /etc/jupyter/ below) - jupyter_server's
+# `extension enable` CLI reports a false-negative "Validation failed" for this package (its
+# metadata-discovery check doesn't recognize the legacy nbserver_extensions activation path even
+# though it works fine at runtime), so it's intentionally not run here.
+RUN \
+    pip install --no-cache-dir $RESOURCES_PATH/jupyter-extensions/tooling-extension/ && \
+    # Cleanup
+    clean-layer.sh
 
 # Install and activate ZSH
 COPY resources/tools/oh-my-zsh.sh $RESOURCES_PATH/tools/oh-my-zsh.sh

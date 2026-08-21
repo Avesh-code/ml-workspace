@@ -74,7 +74,8 @@ RUN apt-mark hold libcublas-12-6 libnccl2
 
 ### CUDA DEVEL ###
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libtinfo5 libncursesw5 \
+    # libtinfo5/libncursesw5 were only needed for cuda-gdb's ncurses ABI on older Ubuntu releases;
+    # Ubuntu 24.04's own base packages already ship the ncurses6 ABI CUDA 12.6's tools link against.
     cuda-cudart-dev-12-6 \
     cuda-command-line-tools-12-6 \
     cuda-minimal-build-12-6 \
