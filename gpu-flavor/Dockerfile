@@ -99,9 +99,13 @@ ENV LIBRARY_PATH=/usr/local/cuda/lib64/stubs
 
 ### CUDNN9 DEVEL ###
 
+# cudnn9-cuda-12-6 (the CUDA-12.6-suffixed meta-package) stopped being updated past 9.6.0.74-1
+# and now pulls in a since-removed exact sub-package version, making it uninstallable. The
+# unsuffixed cudnn9-cuda-12 meta-package (ABI-compatible across CUDA 12.x minor versions) is the
+# one NVIDIA keeps current.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    cudnn9-cuda-12-6 \
-    && apt-mark hold cudnn9-cuda-12-6 && \
+    cudnn9-cuda-12 \
+    && apt-mark hold cudnn9-cuda-12 && \
     # Cleanup
     apt-get clean && \
     rm -rf /root/.cache/* && \
@@ -117,7 +121,9 @@ ENV LD_LIBRARY_PATH=${LD_LIBRARY_PATH}:/usr/local/cuda/extras/CUPTI/lib64
 
 RUN \
     apt-get update && \
-    apt-get install -y libomp-dev libopenblas-base && \
+    # libopenblas-base was split into per-threading-backend packages (libopenblas0-pthread etc.)
+    # behind the libopenblas0 metapackage on modern Ubuntu; the old name is gone.
+    apt-get install -y libomp-dev libopenblas0 && \
     # Install pytorch gpu - uninstall cpu only build first
     pip uninstall -y torch torchvision torchaudio && \
     # https://pytorch.org/get-started/locally/
@@ -164,9 +170,10 @@ ENV TF_FORCE_GPU_ALLOW_GROWTH=true
 
 #TODO: tests are currently empty COPY resources/tests/ /resources/tests
 
-# argument needs to be initalized again
+# arguments declared before FROM go out of scope after it - need to be re-declared to use below
 ARG ARG_WORKSPACE_VERSION="latest"
 ENV WORKSPACE_VERSION=$ARG_WORKSPACE_VERSION
+ARG ARG_WORKSPACE_BASE_IMAGE
 
 # Overwrite & add Labels
 ARG ARG_BUILD_DATE="unknown"
