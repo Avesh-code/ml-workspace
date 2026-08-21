@@ -77,6 +77,25 @@ def configure_runtime_user():
                 except Exception as ex:
                     log.warning("Could not copy %s to new user home: %s", src, ex)
 
+        # Defensive safety net: rewrite any lingering literal "/root" path left over in the small,
+        # directly-copied text config files (e.g. an older-built image's .zshrc that predates the
+        # fix making that file's own $HOME reference re-expand correctly per-user). Deliberately
+        # scoped to just the top-level dotfiles, not recursed into .oh-my-zsh/.local/.vscode/etc,
+        # since those are large trees of code/binaries where a blind text substitution is a much
+        # bigger footgun than the narrow problem it's meant to catch.
+        for entry in [".zshrc", ".bashrc", ".condarc"]:
+            path = os.path.join(runtime_home, entry)
+            if os.path.isfile(path):
+                try:
+                    with open(path, "r") as f:
+                        content = f.read()
+                    fixed = content.replace("/root/", runtime_home + "/")
+                    if fixed != content:
+                        with open(path, "w") as f:
+                            f.write(fixed)
+                except Exception as ex:
+                    log.warning("Could not rewrite /root paths in %s: %s", path, ex)
+
         call(["chown", "-R", username + ":" + username, runtime_home])
 
     # Always re-assert /workspace ownership (idempotent, cheap, and handles the case where the

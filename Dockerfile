@@ -786,6 +786,10 @@ RUN \
     # TODO do not activate for now, opening the bash shell is a bit slow
     # conda init bash && \
     conda init zsh && \
+    # Suppress conda's "(base) " prompt prefix - it fights with the workspace's own
+    # user@host:path prompt set in .zshrc, since conda's auto-activate-base hook re-touches
+    # the prompt at every shell startup, after .zshrc's own PROMPT= line has already run.
+    conda config --set changeps1 false && \
     chsh -s $(which zsh) $NB_USER && \
     # Install sdkman - needs to be executed after zsh
     curl -s https://get.sdkman.io | bash && \
