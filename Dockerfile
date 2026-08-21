@@ -750,7 +750,7 @@ RUN \
 # Install Jupyter Tooling Extension
 COPY resources/jupyter/extensions $RESOURCES_PATH/jupyter-extensions
 
-# NOTE: the frontend "Open Tools" launcher widget (classic Notebook 6 nbextension JS) is NOT
+# NOTE: the original "Open Tools" launcher widget (classic Notebook 6 nbextension JS) is NOT
 # installed here - it needs an actual JupyterLab-4-native rewrite (real extension-builder/TS
 # scaffolding), out of scope for a version bump. What IS installed is the backend server extension,
 # which registers /tooling/ping - nginx's per-request auth check for /tools/* (VS Code, VNC,
@@ -763,6 +763,15 @@ COPY resources/jupyter/extensions $RESOURCES_PATH/jupyter-extensions
 # though it works fine at runtime), so it's intentionally not run here.
 RUN \
     pip install --no-cache-dir $RESOURCES_PATH/jupyter-extensions/tooling-extension/ && \
+    # Cleanup
+    clean-layer.sh
+
+# Restores launcher tiles for the other workspace tools (VS Code, VNC, ungit, filebrowser, netdata,
+# glances) using jupyter_app_launcher - an existing, maintained, already-JupyterLab-4-compatible
+# extension driven by a plain YAML config, rather than hand-writing custom TypeScript.
+COPY resources/jupyter/jp_app_launcher.yaml $HOME/.local/share/jupyter/jupyter_app_launcher/jp_app_launcher.yaml
+RUN \
+    pip install --no-cache-dir jupyter_app_launcher && \
     # Cleanup
     clean-layer.sh
 
