@@ -57,6 +57,10 @@ def configure_runtime_user():
             os.environ["WORKSPACE_RUNTIME_HOME"] = "/root"
             return
 
+        # Best-effort: only present on images that have Docker installed (see the DOCKER section
+        # of the Dockerfile) - lets this user run `docker` directly instead of needing `sudo`.
+        call(["usermod", "-aG", "docker", username], stderr=DEVNULL)
+
         # Passwordless sudo - this is a personal dev workspace, not a shared multi-tenant system.
         # sudo's default "secure_path" strips the image's custom PATH (pyenv shims/conda) and
         # replaces it with a bare system default, which breaks tools like `pyenv` as soon as this

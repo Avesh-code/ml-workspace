@@ -804,6 +804,29 @@ RUN \
     # Cleanup
     clean-layer.sh
 
+### DOCKER (nested Docker-in-Docker, meant to run under the sysbox-runc runtime on the host) ###
+
+# Installs the full Docker Engine (dockerd + cli + containerd + buildx/compose plugins) so
+# developers can run `docker` inside their own workspace container. dockerd itself is started by
+# supervisor as root (see resources/supervisor/programs/docker.conf) - that's expected and safe
+# specifically because the host is expected to run this container under the sysbox-runc runtime,
+# which remaps this container's "root" to an unprivileged host UID via a user namespace. Running
+# this container under the plain default runtime instead would make dockerd fail to start (no
+# --privileged, no real root) and is not a supported configuration.
+RUN \
+    install -m 0755 -d /etc/apt/keyrings && \
+    curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc && \
+    chmod a+r /etc/apt/keyrings/docker.asc && \
+    echo \
+        "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu \
+        $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
+        > /etc/apt/sources.list.d/docker.list && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends \
+        docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin && \
+    # Cleanup
+    clean-layer.sh
+
 ### VSCODE ###
 
 # Install vscode extension
