@@ -467,17 +467,48 @@ RUN \
     apt-get update  && \
     # required for websockify
     # apt-get install -y python-numpy  && \
+    # TigerVNC's prebuilt Xvnc binary is dynamically linked against libxcvt (the VESA/CVT
+    # modeline-generation library X servers have needed since ~21.1) - without it installed, Xvnc
+    # fails immediately with "error while loading shared libraries: libxcvt.so.0", leaving nothing
+    # listening on the VNC port and every websockify connection getting refused.
+    apt-get install -y --no-install-recommends libxcvt0 && \
     cd ${RESOURCES_PATH} && \
     # Tiger VNC
-    wget -qO- https://sourceforge.net/projects/tigervnc/files/stable/1.16.2/tigervnc-1.16.2.x86_64.tar.gz/download | tar xz --strip 1 -C / && \
+    # NOTE: download-then-extract as two separate steps (not `wget -qO- URL | tar xz`) so a
+    # failed/truncated download fails the build loudly via tar's own exit code, instead of
+    # silently producing an image with no Xvnc/vncpasswd binaries at all - SourceForge's downloads
+    # have proven flaky enough in practice to make this worth the extra retry robustness too.
+    wget --tries=3 --waitretry=10 -q https://sourceforge.net/projects/tigervnc/files/stable/1.16.2/tigervnc-1.16.2.x86_64.tar.gz/download -O tigervnc.tar.gz && \
+    tar xzf tigervnc.tar.gz --strip 1 -C / && \
+    rm tigervnc.tar.gz && \
+    # Verify the extraction actually produced the real binaries. A truncated/corrupted download
+    # (e.g. SourceForge serving a small error/redirect page instead of the real tarball under
+    # load) can still let wget+tar exit 0, silently poisoning this Docker layer's build cache with
+    # a broken VNC install that only surfaces later, at container runtime, as Xvnc failing to
+    # start - failing loudly here instead means a bad download just gets retried on next build.
+    # vncserver itself lives at /usr/libexec/vncserver in this tarball, not /usr/bin/vncserver -
+    # verified directly against a real, correctly-extracted copy of the archive.
+    test -x /usr/bin/Xvnc && test -x /usr/bin/vncpasswd && test -x /usr/libexec/vncserver && \
     # Install websockify
     mkdir -p ./novnc/utils/websockify && \
     # Before updating the noVNC version, we need to make sure that our monkey patching scripts still work!!
-    wget -qO- https://github.com/novnc/noVNC/archive/v1.7.0.tar.gz | tar xz --strip 1 -C ./novnc && \
-    wget -qO- https://github.com/novnc/websockify/archive/v0.13.0.tar.gz | tar xz --strip 1 -C ./novnc/utils/websockify && \
+    wget --tries=3 --waitretry=10 -q https://github.com/novnc/noVNC/archive/v1.7.0.tar.gz -O novnc.tar.gz && \
+    tar xzf novnc.tar.gz --strip 1 -C ./novnc && \
+    rm novnc.tar.gz && \
+    # Same silent-truncation risk as the TigerVNC download above - verify the extraction actually
+    # produced the expected utils/ dir (missing here previously left supervisor unable to even
+    # chdir into utils/websockify/, crash-looping the whole novnc proxy) before trusting it.
+    test -d ./novnc/utils && \
+    wget --tries=3 --waitretry=10 -q https://github.com/novnc/websockify/archive/v0.13.0.tar.gz -O websockify.tar.gz && \
+    tar xzf websockify.tar.gz --strip 1 -C ./novnc/utils/websockify && \
+    rm websockify.tar.gz && \
+    test -f ./novnc/utils/websockify/run && \
     # noVNC v1.7.0 no longer ships .sh launcher scripts under utils/ (replaced by utils/novnc_proxy) -
     # harmless either way since novnc.conf actually starts websockify directly, not via this script.
-    chmod +x -v ./novnc/utils/*.sh 2>/dev/null; \
+    # Wrapped with `|| true` (not a bare `;`) so this glob-miss stays harmless without breaking the
+    # && chain - a bare `;` here previously let every test-verification check above it fail
+    # silently, since the RUN instruction's exit status came from whatever ran last regardless.
+    (chmod +x -v ./novnc/utils/*.sh 2>/dev/null || true) && \
     # create user vnc directory
     mkdir -p $HOME/.vnc && \
     # Fix permissions
@@ -791,8 +822,18 @@ RUN \
     # the prompt at every shell startup, after .zshrc's own PROMPT= line has already run.
     conda config --set changeps1 false && \
     chsh -s $(which zsh) $NB_USER && \
-    # Install sdkman - needs to be executed after zsh
-    curl -s https://get.sdkman.io | bash && \
+    # Install sdkman - needs to be executed after zsh. The installer's own internal download of
+    # its "native CLI" binary (from a separate broker service) has proven flaky enough in practice
+    # (connection resets) to fail the whole build on its own - retry it a few times, and since
+    # that native binary is just an optional acceleration layer on top of SDKMAN's core POSIX
+    # shell functionality, don't hard-fail this build over it if every retry still comes up short.
+    ( for i in 1 2 3 4 5; do \
+        curl -s https://get.sdkman.io | bash && exit 0; \
+        echo "SDKMAN install attempt $i failed, retrying in 10s..."; \
+        sleep 10; \
+      done; \
+      echo "WARNING: SDKMAN install failed after 5 attempts - continuing without it" \
+    ) && \
     # Cleanup
     clean-layer.sh
 
