@@ -76,9 +76,12 @@ def configure_runtime_user():
         os.chmod("/etc/sudoers.d/" + username, 0o440)
 
         # Copy root's shell/tooling setup (oh-my-zsh, conda init, VS Code extensions already
-        # installed at build time, etc.) so the new user's environment isn't a bare, broken shell
+        # installed at build time, etc.) so the new user's environment isn't a bare, broken shell.
+        # .config/xfce4 (panel/taskbar layout) and Desktop (app shortcuts) do the same for the VNC
+        # desktop session, which now also runs as this user instead of root - .vnc itself is
+        # deliberately not copied here since start-vnc-server.sh creates it fresh per user anyway.
         for entry in [".zshrc", ".bashrc", ".oh-my-zsh", ".config/Code", ".vscode", ".condarc",
-                      ".jupyter", ".local"]:
+                      ".jupyter", ".local", ".config/xfce4", "Desktop"]:
             src = os.path.join("/root", entry)
             dst = os.path.join(runtime_home, entry)
             if os.path.exists(src) and not os.path.exists(dst):

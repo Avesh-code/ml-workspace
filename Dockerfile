@@ -575,6 +575,20 @@ RUN \
     # Cleanup
     clean-layer.sh
 
+# Install Google Chrome - unlike Chromium (dropped from the Ubuntu archives in favor of a
+# snap-only package, which needs snapd and doesn't work inside a container), Google still ships
+# a genuine .deb directly, so this installs cleanly the same way it always has.
+RUN \
+    if [ "$WORKSPACE_FLAVOR" = "minimal" ]; then \
+        exit 0 ; \
+    fi && \
+    wget -q https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb -O /tmp/google-chrome.deb && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends /tmp/google-chrome.deb && \
+    rm /tmp/google-chrome.deb && \
+    # Cleanup
+    clean-layer.sh
+
 ### END GUI TOOLS ###
 
 ### DATA SCIENCE BASICS ###
