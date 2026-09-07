@@ -119,6 +119,20 @@ def configure_runtime_user():
     if os.path.exists(workspace_home):
         call(["chown", "-R", username + ":" + username, workspace_home])
 
+    # Symlink nginx's login.log into the workspace for developer convenience. Best-effort and
+    # never fatal - unlike nginx's own startup, which used to write directly into /workspace and
+    # would refuse to start at all if that path had a permission problem (e.g. a stale UID
+    # mismatch left over from an earlier container instance under sysbox's user-namespace
+    # remapping), taking the whole server down on every restart.
+    try:
+        workspace_meta_dir = os.path.join(workspace_home, ".workspace")
+        os.makedirs(workspace_meta_dir, exist_ok=True)
+        login_log_link = os.path.join(workspace_meta_dir, "login.log")
+        if not os.path.lexists(login_log_link):
+            os.symlink("/var/log/nginx/login.log", login_log_link)
+    except Exception as ex:
+        log.warning("Could not symlink login.log into workspace: %s", ex)
+
     os.environ["WORKSPACE_RUNTIME_USER"] = username
     os.environ["WORKSPACE_RUNTIME_HOME"] = runtime_home
 
