@@ -859,15 +859,23 @@ RUN \
     # Cleanup
     clean-layer.sh
 
-### DOCKER (nested Docker-in-Docker, meant to run under the sysbox-runc runtime on the host) ###
+### DOCKER (nested Docker-in-Docker, meant to run under the sysbox-runc runtime on the host, or
+### under privileged: true where sysbox isn't usable - e.g. it conflicts with GPU device
+### reservation on the gpu-flavor image) ###
 
 # Installs the full Docker Engine (dockerd + cli + containerd + buildx/compose plugins) so
 # developers can run `docker` inside their own workspace container. dockerd itself is started by
-# supervisor as root (see resources/supervisor/programs/docker.conf) - that's expected and safe
-# specifically because the host is expected to run this container under the sysbox-runc runtime,
-# which remaps this container's "root" to an unprivileged host UID via a user namespace. Running
-# this container under the plain default runtime instead would make dockerd fail to start (no
-# --privileged, no real root) and is not a supported configuration.
+# supervisor as root (see resources/supervisor/programs/docker.conf) - safe under sysbox-runc
+# (remaps this container's "root" to an unprivileged host UID via a user namespace) or under
+# privileged: true (real root, full isolation traded away instead). Running this container under
+# the plain default runtime with neither is not a supported configuration - dockerd fails to
+# start outright.
+#
+# fuse-overlayfs is installed so dockerd can avoid the classic nested-Docker-in-Docker failure:
+# running the inner dockerd with the default overlay2 driver on top of a host filesystem that's
+# already overlay2 (which most Docker hosts are) hits "failed to mount ... overlay ... invalid
+# argument" - the kernel doesn't support overlayfs layered on overlayfs. fuse-overlayfs is a
+# userspace implementation that sidesteps that restriction entirely.
 RUN \
     install -m 0755 -d /etc/apt/keyrings && \
     curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc && \
@@ -878,7 +886,7 @@ RUN \
         > /etc/apt/sources.list.d/docker.list && \
     apt-get update && \
     apt-get install -y --no-install-recommends \
-        docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin && \
+        docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin fuse-overlayfs && \
     # Cleanup
     clean-layer.sh
 
