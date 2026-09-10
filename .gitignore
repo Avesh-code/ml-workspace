@@ -100,3 +100,4 @@ temp/*
 docker-compose.yml
 docker-compose.gpu.yml
 .env
+ml-workspace.yaml

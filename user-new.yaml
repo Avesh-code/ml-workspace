@@ -1,0 +1,170 @@
+# Per-developer ml-workspace template for Kubernetes, with HAMi for GPU allocation.
+#
+# "user-new" below is a placeholder username - copy this file to <actual-username>.yaml and
+# replace every "user-new" (Namespace name, app label, Deployment/Service name, Secret's
+# WORKSPACE_AUTH_USER, and the /home/<user> mountPath) with the real username before applying.
+# Namespace, resource name, and app label are all kept equal to the username so multiple
+# developers can be deployed side by side without colliding.
+#
+# Prerequisites (not covered by this file):
+#   - HAMi installed cluster-wide (device plugin + scheduler extender + mutating webhook):
+#       https://github.com/Project-HAMi/HAMi - `helm install hami ...`
+#   - A StorageClass available for the PVCs below (edit storageClassName, or remove the field
+#     entirely to use the cluster default).
+#   - Pod Security admission on this namespace must allow privileged containers (see the
+#     `pod-security.kubernetes.io/enforce: privileged` label below) - Docker-in-Docker here uses
+#     privileged: true, same as docker-compose.gpu.yml (no sysbox: confirmed incompatible with
+#     GPU device reservation).
+#
+# To change how much GPU this user gets, edit the three nvidia.com/* values under resources below:
+#   nvidia.com/gpu       - number of vGPU slices (usually 1)
+#   nvidia.com/gpumem    - GPU memory reserved, in MiB
+#   nvidia.com/gpucores  - % of SM cores this pod is limited to (1-100)
+#
+# Before applying: set WORKSPACE_AUTH_PASSWORD/VNC_PW in the Secret below to real values, and set
+# storageClassName on the PVCs to match your cluster.
+#
+# Usage:
+#   kubectl apply -f user-new.yaml
+#   kubectl -n user-new get pods -o wide
+#   kubectl -n user-new port-forward svc/user-new 8080:8080   # or use the NodePort
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: user-new
+  labels:
+    # Required for privileged containers under the default (restricted) Pod Security admission -
+    # without this label, the API server rejects the pod outright before it ever reaches the
+    # scheduler. Loosen only this namespace, not the whole cluster.
+    pod-security.kubernetes.io/enforce: privileged
+    pod-security.kubernetes.io/audit: privileged
+    pod-security.kubernetes.io/warn: privileged
+
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: user-new
+  namespace: user-new
+stringData:
+  WORKSPACE_AUTH_USER: user-new
+  WORKSPACE_AUTH_PASSWORD: changeme-password
+  VNC_PW: changeme-vnc-password
+
+---
+# Persists this developer's /workspace across pod restarts/recreation.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: user-new-workspace
+  namespace: user-new
+spec:
+  accessModes: ["ReadWriteOnce"]
+  # storageClassName: your-storage-class   # uncomment and set, or remove to use cluster default
+  resources:
+    requests:
+      storage: 50Gi
+
+---
+# Persists this developer's home directory (dotfiles, VS Code settings, shell history, browser
+# downloads) - everything outside /workspace and this path lives in the pod's throwaway
+# filesystem and is lost whenever the pod is recreated.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: user-new-data
+  namespace: user-new
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 20Gi
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: user-new
+  namespace: user-new
+  labels:
+    app: user-new
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate   # avoid two pods fighting over the same ReadWriteOnce PVCs during a rollout
+  selector:
+    matchLabels:
+      app: user-new
+  template:
+    metadata:
+      labels:
+        app: user-new
+    spec:
+      # HAMi mutates unscheduled pods requesting its resource names onto its own scheduler via a
+      # webhook, but setting this explicitly is the documented, more predictable path across HAMi
+      # versions/setups.
+      schedulerName: hami-scheduler
+      containers:
+        - name: ml-workspace
+          image: docker-dmz.nuvoai.io/ap57438v/ml-workspace:5f3da27-gpu
+          ports:
+            - containerPort: 8080
+          envFrom:
+            - secretRef:
+                name: user-new
+          env:
+            - name: NVIDIA_DRIVER_CAPABILITIES
+              value: compute,utility
+          securityContext:
+            # No sysbox here (K8s RuntimeClass would be the equivalent, but sysbox is confirmed
+            # incompatible with GPU device reservation) - privileged: true instead, same tradeoff
+            # as docker-compose.gpu.yml: disables most container isolation, effectively grants
+            # this pod root on the node it lands on.
+            privileged: true
+          resources:
+            requests:
+              cpu: "4"
+              memory: 16Gi
+              nvidia.com/gpu: "1"
+              nvidia.com/gpumem: "16000"
+              nvidia.com/gpucores: "100"
+            limits:
+              cpu: "4"
+              memory: 16Gi
+              nvidia.com/gpu: "1"
+              nvidia.com/gpumem: "16000"
+              nvidia.com/gpucores: "100"
+          volumeMounts:
+            - name: workspace
+              mountPath: /workspace
+            - name: data
+              mountPath: /home/user-new   # must match WORKSPACE_AUTH_USER above
+            - name: dshm
+              mountPath: /dev/shm
+      volumes:
+        - name: workspace
+          persistentVolumeClaim:
+            claimName: user-new-workspace
+        - name: data
+          persistentVolumeClaim:
+            claimName: user-new-data
+        - name: dshm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 2Gi
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: user-new
+  namespace: user-new
+spec:
+  type: NodePort
+  selector:
+    app: user-new
+  ports:
+    - port: 8080
+      targetPort: 8080
+      nodePort: 30080
