@@ -105,6 +105,9 @@ spec:
       # webhook, but setting this explicitly is the documented, more predictable path across HAMi
       # versions/setups.
       schedulerName: hami-scheduler
+      # Pins the pod to a specific node - swap the value if you want a different GPU host.
+      nodeSelector:
+        kubernetes.io/hostname: mhgp036
       containers:
         - name: ml-workspace
           image: docker-dmz.nuvoai.io/ap57438v/ml-workspace:5f3da27-gpu
@@ -122,6 +125,24 @@ spec:
             # as docker-compose.gpu.yml: disables most container isolation, effectively grants
             # this pod root on the node it lands on.
             privileged: true
+          # /healthy is nginx's own unauthenticated check endpoint (auth_basic off in
+          # resources/nginx/nginx.conf) - a real HTTP 200 through nginx, not just "port is open".
+          livenessProbe:
+            httpGet:
+              path: /healthy
+              port: 8080
+            initialDelaySeconds: 60   # image is heavy (CUDA/conda/full ML stack) - give it time to boot
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /healthy
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
           resources:
             requests:
               cpu: "4"

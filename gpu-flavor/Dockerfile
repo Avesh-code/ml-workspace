@@ -169,13 +169,14 @@ ENV TF_FORCE_GPU_ALLOW_GROWTH=true
 # The base image's docker.conf runs dockerd with --storage-driver=fuse-overlayfs to fix nested
 # Docker-in-Docker on the CPU flavor (see resources/supervisor/programs/docker.conf) - but
 # fuse-overlayfs conflicts with the NVIDIA container runtime's device/library injection hooks,
-# breaking `docker run --gpus ...` inside this GPU flavor. Revert to the plain overlay2 driver
-# here so GPU passthrough for nested Docker-in-Docker works again (this reintroduces the
-# original nested-overlay-on-overlay limitation for non-GPU nested `docker run` on this flavor
-# only - CPU flavor keeps the fuse-overlayfs fix).
-RUN sed -i \
-    's|^command=dockerd --host=unix:///var/run/docker.sock --storage-driver=fuse-overlayfs$|command=dockerd --host=unix:///var/run/docker.sock|' \
-    /etc/supervisor/conf.d/docker.conf
+# breaking `docker run --gpus ...` inside this GPU flavor. Strip just that one flag (not the
+# whole command line, which would silently stop matching the next time docker.conf's command
+# changes) so GPU passthrough for nested Docker-in-Docker works again - the --bip/
+# --default-address-pools flags (fixing a separate docker0-subnet collision with the host) stay,
+# since those aren't GPU-related. This reintroduces the original nested-overlay-on-overlay
+# limitation for non-GPU nested `docker run` on this flavor only - CPU flavor keeps the
+# fuse-overlayfs fix.
+RUN sed -i 's/ --storage-driver=fuse-overlayfs//' /etc/supervisor/conf.d/docker.conf
 
 ### CONFIGURATION ###
 
