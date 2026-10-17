@@ -1,4 +1,4 @@
-# Per-developer ml-workspace template for Kubernetes, with HAMi for GPU allocation.
+# Per-developer ml-workspace template for Kubernetes.
 #
 # "user-new" below is a placeholder username - copy this file to <actual-username>.yaml and
 # replace every "user-new" (Namespace name, app label, Deployment/Service name, Secret's
@@ -6,20 +6,22 @@
 # Namespace, resource name, and app label are all kept equal to the username so multiple
 # developers can be deployed side by side without colliding.
 #
+# GPU access: this pod does NOT request nvidia.com/gpu from Kubernetes. The GPU is handed to the
+# container directly by the NVIDIA container runtime, selected with NVIDIA_VISIBLE_DEVICES below.
+# Tradeoff: Kubernetes doesn't know this pod uses a GPU, so it won't stop another workload from
+# landing on the same physical GPU, and there's no memory/core limit. Pick a GPU nobody else uses
+# (`nvidia-smi` on the node) on the node pinned by nodeSelector below.
+#
 # Prerequisites (not covered by this file):
-#   - HAMi installed cluster-wide (device plugin + scheduler extender + mutating webhook):
-#       https://github.com/Project-HAMi/HAMi - `helm install hami ...`
+#   - The NVIDIA container runtime as containerd's default runtime on the node - this cluster has
+#     no `nvidia` RuntimeClass, so no runtimeClassName is set (adding one that doesn't exist makes
+#     the API server reject every pod: "RuntimeClass "nvidia" not found").
 #   - A StorageClass available for the PVCs below (edit storageClassName, or remove the field
 #     entirely to use the cluster default).
-#   - Pod Security admission on this namespace must allow privileged containers (see the
-#     `pod-security.kubernetes.io/enforce: privileged` label below) - Docker-in-Docker here uses
-#     privileged: true, same as docker-compose.gpu.yml (no sysbox: confirmed incompatible with
-#     GPU device reservation).
-#
-# To change how much GPU this user gets, edit the three nvidia.com/* values under resources below:
-#   nvidia.com/gpu       - number of vGPU slices (usually 1)
-#   nvidia.com/gpumem    - GPU memory reserved, in MiB
-#   nvidia.com/gpucores  - % of SM cores this pod is limited to (1-100)
+#   - Pod Security admission `privileged` level on the namespace (label below): Docker-in-Docker
+#     needs SYS_ADMIN/NET_ADMIN and unconfined seccomp/AppArmor, which `baseline` forbids. The
+#     container itself is NOT privileged: true - that would expose every GPU on the node via /dev.
+#   - Kubernetes >= 1.30 for securityContext.appArmorProfile.
 #
 # Before applying: set WORKSPACE_AUTH_PASSWORD/VNC_PW in the Secret below to real values, and set
 # storageClassName on the PVCs to match your cluster.
@@ -34,7 +36,7 @@ kind: Namespace
 metadata:
   name: user-new
   labels:
-    # Required for privileged containers under the default (restricted) Pod Security admission -
+    # Required for the added capabilities and unconfined seccomp/AppArmor below -
     # without this label, the API server rejects the pod outright before it ever reaches the
     # scheduler. Loosen only this namespace, not the whole cluster.
     pod-security.kubernetes.io/enforce: privileged
@@ -53,23 +55,10 @@ stringData:
   VNC_PW: changeme-vnc-password
 
 ---
-# Persists this developer's /workspace across pod restarts/recreation.
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: user-new-workspace
-  namespace: user-new
-spec:
-  accessModes: ["ReadWriteOnce"]
-  # storageClassName: your-storage-class   # uncomment and set, or remove to use cluster default
-  resources:
-    requests:
-      storage: 50Gi
-
----
-# Persists this developer's home directory (dotfiles, VS Code settings, shell history, browser
-# downloads) - everything outside /workspace and this path lives in the pod's throwaway
-# filesystem and is lost whenever the pod is recreated.
+# This developer's only persistent storage: mounted at /home/<user> (dotfiles, VS Code settings,
+# shell history, code, data), and its workspace/ subfolder also at /workspace - see volumeMounts.
+# Everything outside this volume lives in the pod's throwaway filesystem and is lost whenever
+# the pod is recreated.
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -77,9 +66,10 @@ metadata:
   namespace: user-new
 spec:
   accessModes: ["ReadWriteOnce"]
+  # storageClassName: your-storage-class   # uncomment and set, or remove to use cluster default
   resources:
     requests:
-      storage: 20Gi
+      storage: 70Gi
 
 ---
 apiVersion: apps/v1
@@ -101,11 +91,8 @@ spec:
       labels:
         app: user-new
     spec:
-      # HAMi mutates unscheduled pods requesting its resource names onto its own scheduler via a
-      # webhook, but setting this explicitly is the documented, more predictable path across HAMi
-      # versions/setups.
-      schedulerName: hami-scheduler
-      # Pins the pod to a specific node - swap the value if you want a different GPU host.
+      # Pins the pod to a specific node - NVIDIA_VISIBLE_DEVICES below names a GPU on this node,
+      # and local-path PVCs live on whichever node they were first created on.
       nodeSelector:
         kubernetes.io/hostname: mhgp036
       containers:
@@ -117,14 +104,48 @@ spec:
             - secretRef:
                 name: user-new
           env:
+            # Which of the node's GPUs this pod gets: an index ("0"), a comma list ("0,1"), a
+            # UUID ("GPU-..."), or "all". Overrides the image's NVIDIA_VISIBLE_DEVICES=all.
+            - name: NVIDIA_VISIBLE_DEVICES
+              value: "0"
             - name: NVIDIA_DRIVER_CAPABILITIES
               value: compute,utility
           securityContext:
-            # No sysbox here (K8s RuntimeClass would be the equivalent, but sysbox is confirmed
-            # incompatible with GPU device reservation) - privileged: true instead, same tradeoff
-            # as docker-compose.gpu.yml: disables most container isolation, effectively grants
-            # this pod root on the node it lands on.
-            privileged: true
+            # Not privileged: true - a privileged container gets the node's entire /dev, so every
+            # GPU would be visible regardless of NVIDIA_VISIBLE_DEVICES. Grant only what the
+            # nested dockerd needs instead.
+            privileged: false
+            capabilities:
+              add: ["SYS_ADMIN", "NET_ADMIN", "SYS_RESOURCE"]
+            seccompProfile:
+              type: Unconfined
+            appArmorProfile:
+              type: Unconfined
+          lifecycle:
+            postStart:
+              # Unprivileged containers get /sys/fs/cgroup and /proc/sys read-only, which breaks
+              # nested `docker run` and dockerd's ip_forward setup. Remount both read-write, then
+              # do the same cgroup v2 setup as Docker's official dind script (move all processes
+              # into /init so controllers can be delegated to child cgroups). If dockerd starts
+              # before this finishes and exits, supervisor's autorestart brings it back.
+              exec:
+                command:
+                  - /bin/sh
+                  - -c
+                  - |
+                    mount -o remount,rw /sys/fs/cgroup
+                    mount -o remount,rw,bind /proc/sys
+                    sysctl -w net.ipv4.ip_forward=1
+                    if [ -f /sys/fs/cgroup/cgroup.controllers ]; then
+                      mkdir -p /sys/fs/cgroup/init
+                      for i in 1 2 3 4 5; do
+                        xargs -rn1 < /sys/fs/cgroup/cgroup.procs > /sys/fs/cgroup/init/cgroup.procs 2>/dev/null || :
+                        sed -e 's/ / +/g' -e 's/^/+/' < /sys/fs/cgroup/cgroup.controllers \
+                          > /sys/fs/cgroup/cgroup.subtree_control 2>/dev/null && break
+                        sleep 1
+                      done
+                    fi
+                    true
           # /healthy is nginx's own unauthenticated check endpoint (auth_basic off in
           # resources/nginx/nginx.conf) - a real HTTP 200 through nginx, not just "port is open".
           livenessProbe:
@@ -147,26 +168,20 @@ spec:
             requests:
               cpu: "4"
               memory: 16Gi
-              nvidia.com/gpu: "1"
-              nvidia.com/gpumem: "16000"
-              nvidia.com/gpucores: "100"
             limits:
               cpu: "4"
               memory: 16Gi
-              nvidia.com/gpu: "1"
-              nvidia.com/gpumem: "16000"
-              nvidia.com/gpucores: "100"
           volumeMounts:
-            - name: workspace
-              mountPath: /workspace
             - name: data
               mountPath: /home/user-new   # must match WORKSPACE_AUTH_USER above
+            # Same PVC again: Jupyter, VS Code and the terminal all default to /workspace, so it
+            # is backed by /home/<user>/workspace - one volume holds everything.
+            - name: data
+              mountPath: /workspace
+              subPath: workspace
             - name: dshm
               mountPath: /dev/shm
       volumes:
-        - name: workspace
-          persistentVolumeClaim:
-            claimName: user-new-workspace
         - name: data
           persistentVolumeClaim:
             claimName: user-new-data

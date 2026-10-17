@@ -102,3 +102,5 @@ docker-compose.gpu.yml
 .env
 ml-workspace.yaml
 user-new.yaml
+user-new.yaml
+.claude/*
